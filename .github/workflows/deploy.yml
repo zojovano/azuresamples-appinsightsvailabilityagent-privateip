@@ -51,55 +51,9 @@ jobs:
         name: function-app
         path: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/src/AvailabilityAgent/publish
 
-  build-container:
-    runs-on: ubuntu-latest
-    needs: build
-    
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Log in to Azure Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ secrets.ACR_LOGIN_SERVER }}
-        username: ${{ secrets.ACR_USERNAME }}
-        password: ${{ secrets.ACR_PASSWORD }}
-
-    - name: Extract metadata for Docker
-      id: meta
-      uses: docker/metadata-action@v5
-      with:
-        images: ${{ secrets.ACR_LOGIN_SERVER }}/availabilityagent
-        tags: |
-          type=ref,event=branch
-          type=ref,event=pr
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=sha,prefix={{branch}}-
-          type=raw,value=latest,enable={{is_default_branch}}
-
-    - name: Build and push Docker image
-      uses: docker/build-push-action@v5
-      with:
-        context: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
-        file: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/Dockerfile
-        push: true
-        tags: ${{ steps.meta.outputs.tags }}
-        labels: ${{ steps.meta.outputs.labels }}
-        cache-from: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/availabilityagent:buildcache
-        cache-to: type=registry,ref=${{ secrets.ACR_LOGIN_SERVER }}/availabilityagent:buildcache,mode=max
-
-    - name: Output image tags
-      run: |
-        echo "Image tags: ${{ steps.meta.outputs.tags }}"
-
   terraform-plan:
     runs-on: ubuntu-latest
-    needs: build-container
+    needs: build
     if: github.event_name == 'pull_request'
     
     steps:
@@ -136,7 +90,7 @@ jobs:
 
   deploy-infrastructure:
     runs-on: ubuntu-latest
-    needs: build-container
+    needs: build
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment:
       name: production
@@ -163,24 +117,93 @@ jobs:
     - name: Terraform Apply
       run: terraform apply -auto-approve
       working-directory: ./infra
-      env:
-        TF_VAR_container_image: ${{ secrets.ACR_LOGIN_SERVER }}/availabilityagent:${{ github.sha }}
 
     - name: Get Terraform Outputs
       id: terraform-outputs
       run: |
         echo "function_app_name=$(terraform output -raw function_app_name)" >> $GITHUB_OUTPUT
         echo "resource_group_name=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+        echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
       working-directory: ./infra
 
     - name: Output deployment info
       run: |
         echo "Function App Name: ${{ steps.terraform-outputs.outputs.function_app_name }}"
         echo "Resource Group: ${{ steps.terraform-outputs.outputs.resource_group_name }}"
+        echo "ACR Login Server: ${{ steps.terraform-outputs.outputs.acr_login_server }}"
+
+  build-container:
+    runs-on: ubuntu-latest
+    needs: deploy-infrastructure
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    environment:
+      name: production
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TERRAFORM_VERSION }}
+        terraform_wrapper: false
+
+    - name: Terraform Init
+      run: terraform init
+      working-directory: ./infra
+
+    - name: Get ACR credentials from Terraform
+      id: get-acr
+      run: |
+        echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
+        echo "acr_username=$(terraform output -raw acr_username)" >> $GITHUB_OUTPUT
+        ACR_PASSWORD=$(terraform output -raw acr_password)
+        echo "::add-mask::$ACR_PASSWORD"
+        echo "acr_password=$ACR_PASSWORD" >> $GITHUB_OUTPUT
+      working-directory: ./infra
+
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+
+    - name: Log in to Azure Container Registry
+      uses: docker/login-action@v3
+      with:
+        registry: ${{ steps.get-acr.outputs.acr_login_server }}
+        username: ${{ steps.get-acr.outputs.acr_username }}
+        password: ${{ steps.get-acr.outputs.acr_password }}
+
+    - name: Extract metadata for Docker
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ steps.get-acr.outputs.acr_login_server }}/availabilityagent
+        tags: |
+          type=ref,event=branch
+          type=ref,event=pr
+          type=semver,pattern={{version}}
+          type=semver,pattern={{major}}.{{minor}}
+          type=sha,prefix={{branch}}-
+          type=raw,value=latest,enable={{is_default_branch}}
+
+    - name: Build and push Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
+        file: ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/Dockerfile
+        push: true
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
+        cache-from: type=registry,ref=${{ steps.get-acr.outputs.acr_login_server }}/availabilityagent:buildcache
+        cache-to: type=registry,ref=${{ steps.get-acr.outputs.acr_login_server }}/availabilityagent:buildcache,mode=max
+
+    - name: Output image tags
+      run: |
+        echo "Image tags: ${{ steps.meta.outputs.tags }}"
 
   deploy-function-app:
     runs-on: ubuntu-latest
-    needs: deploy-infrastructure
+    needs: build-container
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     environment:
       name: production
@@ -204,11 +227,12 @@ jobs:
       run: terraform init
       working-directory: ./infra
 
-    - name: Get Function App Name
+    - name: Get Function App Name and ACR
       id: get-function-app
       run: |
         echo "function_app_name=$(terraform output -raw function_app_name)" >> $GITHUB_OUTPUT
         echo "resource_group_name=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
+        echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
       working-directory: ./infra
 
     - name: Update Function App Container
@@ -216,7 +240,7 @@ jobs:
         az functionapp config container set \
           --name ${{ steps.get-function-app.outputs.function_app_name }} \
           --resource-group ${{ steps.get-function-app.outputs.resource_group_name }} \
-          --docker-custom-image-name ${{ secrets.ACR_LOGIN_SERVER }}/availabilityagent:${{ github.sha }}
+          --docker-custom-image-name ${{ steps.get-function-app.outputs.acr_login_server }}/availabilityagent:${{ github.sha }}
 
     - name: Restart Function App
       run: |
