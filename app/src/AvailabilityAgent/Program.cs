@@ -15,9 +15,13 @@ var host = new HostBuilder()
         services.AddSingleton<ITelemetryInitializer, CustomTelemetryInitializer>();
 
         // Register HttpClient for making HTTP requests
-        services.AddHttpClient<HttpClient>(client =>
+        services.AddHttpClient();
+        services.AddScoped<HttpClient>(serviceProvider =>
         {
+            var httpClientFactory = serviceProvider.GetRequiredService<IHttpClientFactory>();
+            var client = httpClientFactory.CreateClient();
             client.DefaultRequestHeaders.Add("User-Agent", "Azure-AvailabilityAgent/1.0");
+            return client;
         });
     })
     .Build();

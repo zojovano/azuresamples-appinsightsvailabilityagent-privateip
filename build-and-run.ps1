@@ -142,7 +142,7 @@ function Build-DockerImage {
     Write-Header "Building Docker Image"
     
     Write-ColorOutput "Image: " -Color $Colors.Info -NoNewline
-    Write-ColorOutput "$ImageName:$Tag" -Color $Colors.Success
+    Write-ColorOutput "${ImageName}:${Tag}" -Color $Colors.Success
     Write-ColorOutput "Dockerfile: " -Color $Colors.Info -NoNewline
     Write-ColorOutput $DockerfilePath -Color $Colors.Success
     Write-Host ""
@@ -154,9 +154,10 @@ function Build-DockerImage {
 
     Write-ColorOutput "Building image (this may take a few minutes)..." -Color $Colors.Info
     
+    $imageTag = "${ImageName}:${Tag}"
     $buildArgs = @(
         "build",
-        "-t", "$ImageName:$Tag",
+        "-t", $imageTag,
         "-f", $DockerfilePath,
         $AppPath
     )
@@ -191,12 +192,38 @@ function Start-DockerContainer {
     
     Stop-ExistingContainer
     
+    $imageTag = "${ImageName}:${Tag}"
     Write-ColorOutput "Container: " -Color $Colors.Info -NoNewline
     Write-ColorOutput $ContainerName -Color $Colors.Success
     Write-ColorOutput "Image: " -Color $Colors.Info -NoNewline
-    Write-ColorOutput "$ImageName:$Tag" -Color $Colors.Success
+    Write-ColorOutput $imageTag -Color $Colors.Success
     Write-ColorOutput "Port: " -Color $Colors.Info -NoNewline
     Write-ColorOutput "$Port -> 80" -Color $Colors.Success
+    Write-Host ""
+    
+    # Start Azurite for local storage emulation
+    Write-ColorOutput "Starting Azurite storage emulator..." -Color $Colors.Info
+    $azuriteRunning = docker ps --filter "name=azurite" --format "{{.Names}}" | Select-String -Pattern "azurite" -Quiet
+    if (-not $azuriteRunning) {
+        docker run -d `
+            --name azurite `
+            -p 10000:10000 `
+            -p 10001:10001 `
+            -p 10002:10002 `
+            mcr.microsoft.com/azure-storage/azurite:latest `
+            2>&1 | Out-Null
+        
+        if ($LASTEXITCODE -eq 0) {
+            Write-ColorOutput "✓ Azurite started" -Color $Colors.Success
+            Start-Sleep -Seconds 2  # Give Azurite time to initialize
+        }
+        else {
+            Write-ColorOutput "⚠ Warning: Could not start Azurite" -Color $Colors.Warning
+        }
+    }
+    else {
+        Write-ColorOutput "✓ Azurite already running" -Color $Colors.Success
+    }
     Write-Host ""
     
     Write-ColorOutput "Configuration:" -Color $Colors.Info
@@ -217,12 +244,13 @@ function Start-DockerContainer {
         "-d",
         "--name", $ContainerName,
         "-p", "${Port}:80",
+        "--add-host", "host.docker.internal:host-gateway",
         "-e", "PROBE_URLS=$ProbeUrls",
         "-e", "PROBE_FREQUENCY=$ProbeFrequency",
         "-e", "PROBE_TIMEOUT_SECONDS=$ProbeTimeout",
         "-e", "TEST_NAME_PREFIX=$TestNamePrefix",
         "-e", "TEST_LOCATION=$TestLocation",
-        "-e", "AzureWebJobsStorage=UseDevelopmentStorage=true",
+        "-e", "AzureWebJobsStorage=DefaultEndpointsProtocol=http;AccountName=devstoreaccount1;AccountKey=Eby8vdM02xNOcqFlqUwJPLlmEtlCDXJ1OUzFT50uSRZ6IFsuFq2UVErCz4I6tq/K1SZFPTOtr/KBHBeksoGMGw==;BlobEndpoint=http://host.docker.internal:10000/devstoreaccount1;QueueEndpoint=http://host.docker.internal:10001/devstoreaccount1;TableEndpoint=http://host.docker.internal:10002/devstoreaccount1;",
         "-e", "FUNCTIONS_WORKER_RUNTIME=dotnet-isolated"
     )
 
@@ -239,7 +267,8 @@ function Start-DockerContainer {
         Write-ColorOutput "Mock (local testing)" -Color $Colors.Warning
     }
 
-    $dockerArgs += "$ImageName:$Tag"
+    $imageTag = "${ImageName}:${Tag}"
+    $dockerArgs += $imageTag
 
     Write-Host ""
     Write-ColorOutput "Starting container..." -Color $Colors.Info
@@ -300,10 +329,11 @@ function Remove-DockerContainer {
         Write-ColorOutput "✓ Container removed" -Color $Colors.Success
     }
     
+    $imageTag = "${ImageName}:${Tag}"
     Write-Host ""
-    $response = Read-Host "Remove Docker image '$ImageName:$Tag'? (y/N)"
+    $response = Read-Host "Remove Docker image '$imageTag'? (y/N)"
     if ($response -eq 'y' -or $response -eq 'Y') {
-        docker rmi "$ImageName:$Tag" 2>&1 | Out-Null
+        docker rmi $imageTag 2>&1 | Out-Null
         Write-ColorOutput "✓ Image removed" -Color $Colors.Success
     }
 }
@@ -404,9 +434,10 @@ switch ($Action) {
     }
     'Run' {
         # Check if image exists
-        $imageExists = docker images -q "$ImageName:$Tag" 2>$null
+        $imageTag = "${ImageName}:${Tag}"
+        $imageExists = docker images -q $imageTag 2>$null
         if (-not $imageExists) {
-            Write-ColorOutput "Image '$ImageName:$Tag' not found. Building first..." -Color $Colors.Warning
+            Write-ColorOutput "Image '$imageTag' not found. Building first..." -Color $Colors.Warning
             $success = Build-DockerImage
             if ($success) {
                 $success = Start-DockerContainer

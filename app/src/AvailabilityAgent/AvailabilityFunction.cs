@@ -21,7 +21,7 @@ public class AvailabilityFunction
     }
 
     [Function("AvailabilityProbeFunction")]
-    public async Task Run([TimerTrigger("%PROBE_FREQUENCY%")] TimerInfo myTimer)
+    public async Task Run([TimerTrigger("%PROBE_FREQUENCY%", RunOnStartup = true)] TimerInfo myTimer)
     {
         _logger.LogInformation("Availability Probe Function executed at: {Time}", DateTime.UtcNow);
 
