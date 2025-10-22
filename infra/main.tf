@@ -75,13 +75,17 @@ resource "azurerm_container_registry" "main" {
 
 # Storage Account for Function App
 resource "azurerm_storage_account" "function" {
-  name                     = "st${replace(local.resource_name, "-", "")}"
-  resource_group_name      = azurerm_resource_group.main.name
-  location                 = azurerm_resource_group.main.location
-  account_tier             = "Standard"
-  account_replication_type = "LRS"
-  shared_access_key_enabled = false  # Disable key-based auth, use managed identity instead
-  tags                     = var.tags
+  name                      = "st${replace(local.resource_name, "-", "")}"
+  resource_group_name       = azurerm_resource_group.main.name
+  location                  = azurerm_resource_group.main.location
+  account_tier              = "Standard"
+  account_replication_type  = "LRS"
+  shared_access_key_enabled = false  # Disable key-based auth per Azure Policy requirement
+  
+  # Allow Entra ID (Azure AD) authentication only
+  default_to_oauth_authentication = true
+  
+  tags = var.tags
 }
 
 # App Service Plan (Linux)
