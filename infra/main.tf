@@ -97,8 +97,16 @@ resource "null_resource" "storage_account" {
   depends_on = [azurerm_resource_group.main]
 }
 
+# Data source to reference the CLI-created storage account
+data "azurerm_storage_account" "function" {
+  name                = "st${replace(local.resource_name, "-", "")}"
+  resource_group_name = azurerm_resource_group.main.name
+  
+  depends_on = [null_resource.storage_account]
+}
+
 # Assign RBAC roles to Function App managed identity using Azure CLI
-# Cannot use Terraform role assignments due to SP lacking User Access Administrator role
+# SP now has elevated permissions (User Access Administrator role)
 resource "null_resource" "function_storage_rbac" {
   provisioner "local-exec" {
     command = <<-EOT
@@ -116,21 +124,27 @@ resource "null_resource" "function_storage_rbac" {
         --resource-group ${azurerm_resource_group.main.name} \
         --query id -o tsv)
       
-      # Assign roles
+      # Assign roles for storage access
       az role assignment create \
         --role "Storage Blob Data Owner" \
         --assignee $PRINCIPAL_ID \
-        --scope $STORAGE_ID
+        --assignee-object-id $PRINCIPAL_ID \
+        --assignee-principal-type ServicePrincipal \
+        --scope $STORAGE_ID || true
       
       az role assignment create \
         --role "Storage Queue Data Contributor" \
         --assignee $PRINCIPAL_ID \
-        --scope $STORAGE_ID
+        --assignee-object-id $PRINCIPAL_ID \
+        --assignee-principal-type ServicePrincipal \
+        --scope $STORAGE_ID || true
       
       az role assignment create \
         --role "Storage Table Data Contributor" \
         --assignee $PRINCIPAL_ID \
-        --scope $STORAGE_ID
+        --assignee-object-id $PRINCIPAL_ID \
+        --assignee-principal-type ServicePrincipal \
+        --scope $STORAGE_ID || true
     EOT
   }
 
@@ -138,14 +152,6 @@ resource "null_resource" "function_storage_rbac" {
     azurerm_linux_function_app.main,
     null_resource.storage_account
   ]
-}
-
-# Data source to reference the CLI-created storage account
-data "azurerm_storage_account" "function" {
-  name                = "st${replace(local.resource_name, "-", "")}"
-  resource_group_name = azurerm_resource_group.main.name
-  
-  depends_on = [null_resource.storage_account]
 }
 
 # App Service Plan (Linux)

@@ -61,3 +61,13 @@ output "function_subnet_id" {
   description = "ID of the Function App subnet"
   value       = azurerm_subnet.function.id
 }
+
+output "storage_account_name" {
+  description = "Name of the storage account"
+  value       = data.azurerm_storage_account.function.name
+}
+
+output "function_app_principal_id" {
+  description = "Principal ID of the Function App's managed identity"
+  value       = azurerm_linux_function_app.main.identity[0].principal_id
+}
