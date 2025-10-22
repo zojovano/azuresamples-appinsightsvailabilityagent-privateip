@@ -204,36 +204,18 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v3
-      with:
-        terraform_version: ${{ env.TERRAFORM_VERSION }}
-        terraform_wrapper: false
-
-    - name: Terraform Init
-      run: terraform init
-      working-directory: ./infra
-
-    - name: Get Function App Name and ACR
-      id: get-function-app
-      run: |
-        echo "function_app_name=$(terraform output -raw function_app_name)" >> $GITHUB_OUTPUT
-        echo "resource_group_name=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
-        echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
-      working-directory: ./infra
-
     - name: Update Function App Container
       run: |
         az functionapp config container set \
-          --name ${{ steps.get-function-app.outputs.function_app_name }} \
-          --resource-group ${{ steps.get-function-app.outputs.resource_group_name }} \
-          --docker-custom-image-name ${{ steps.get-function-app.outputs.acr_login_server }}/availabilityagent:${{ github.sha }}
+          --name ${{ needs.deploy-infrastructure.outputs.function_app_name }} \
+          --resource-group ${{ needs.deploy-infrastructure.outputs.resource_group_name }} \
+          --docker-custom-image-name ${{ needs.deploy-infrastructure.outputs.acr_login_server }}/availabilityagent:${{ github.sha }}
 
     - name: Restart Function App
       run: |
         az functionapp restart \
-          --name ${{ steps.get-function-app.outputs.function_app_name }} \
-          --resource-group ${{ steps.get-function-app.outputs.resource_group_name }}
+          --name ${{ needs.deploy-infrastructure.outputs.function_app_name }} \
+          --resource-group ${{ needs.deploy-infrastructure.outputs.resource_group_name }}
 
     - name: Wait for Function App to be ready
       run: sleep 30
@@ -241,7 +223,7 @@ jobs:
     - name: Verify deployment
       run: |
         az functionapp show \
-          --name ${{ steps.get-function-app.outputs.function_app_name }} \
-          --resource-group ${{ steps.get-function-app.outputs.resource_group_name }} \
+          --name ${{ needs.deploy-infrastructure.outputs.function_app_name }} \
+          --resource-group ${{ needs.deploy-infrastructure.outputs.resource_group_name }} \
           --query "state" \
           --output tsv
