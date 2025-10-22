@@ -1,0 +1,33 @@
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.suo
+*.log
+
+# Azure Functions
+local.settings.json
+__blobstorage__
+__queuestorage__
+__azurite_db*__.json
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+.terraform.lock.hcl
+terraform.tfvars
+
+# Docker
+.dockerignore
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+*.swp
+*.swo
+*~
+.idea/

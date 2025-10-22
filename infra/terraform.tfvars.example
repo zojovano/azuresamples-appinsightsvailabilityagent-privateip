@@ -1,0 +1,33 @@
+# Example terraform.tfvars file
+# Copy this file to terraform.tfvars and customize the values
+
+location     = "eastus"
+environment  = "dev"
+project_name = "availagent"
+
+# Probe configuration
+probe_urls = jsonencode([
+  "https://internal-api.company.local",
+  "http://10.0.1.50/health",
+  "https://private-web-app.azurewebsites.net"
+])
+
+probe_frequency       = "0 */5 * * * *" # Every 5 minutes
+probe_timeout_seconds = 30
+test_name_prefix      = "Private-Endpoint"
+test_location         = "VNET-EastUS"
+
+# Network configuration
+vnet_address_space              = ["10.0.0.0/16"]
+function_subnet_address_prefix  = ["10.0.1.0/24"]
+
+# Container image (leave empty for initial deployment, update after first build)
+container_image = ""
+
+# Tags
+tags = {
+  Project     = "AvailabilityAgent"
+  Environment = "dev"
+  ManagedBy   = "Terraform"
+  CostCenter  = "IT-Operations"
+}
