@@ -215,8 +215,8 @@ resource "azurerm_linux_function_app" "main" {
       }
     }
 
-    acr_use_managed_identity_credentials = true
-    vnet_route_all_enabled               = true
+    container_registry_use_managed_identity = true
+    vnet_route_all_enabled                  = true
   }
 
   app_settings = {
