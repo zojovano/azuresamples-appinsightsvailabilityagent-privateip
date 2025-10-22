@@ -72,8 +72,24 @@ resource "azurerm_container_registry" "main" {
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
   sku                 = "Basic"
-  admin_enabled       = true
+  admin_enabled       = false  # Disable admin account, use RBAC only
   tags                = var.tags
+}
+
+# Assign AcrPush role to the service principal for CI/CD
+resource "null_resource" "acr_rbac_sp" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      az role assignment create \
+        --role "AcrPush" \
+        --assignee ${data.azurerm_client_config.current.client_id} \
+        --assignee-object-id ${data.azurerm_client_config.current.object_id} \
+        --assignee-principal-type ServicePrincipal \
+        --scope ${azurerm_container_registry.main.id} || true
+    EOT
+  }
+
+  depends_on = [azurerm_container_registry.main]
 }
 
 # Storage Account for Function App
@@ -145,12 +161,21 @@ resource "null_resource" "function_storage_rbac" {
         --assignee-object-id $PRINCIPAL_ID \
         --assignee-principal-type ServicePrincipal \
         --scope $STORAGE_ID || true
+      
+      # Assign AcrPull role for container image access
+      az role assignment create \
+        --role "AcrPull" \
+        --assignee $PRINCIPAL_ID \
+        --assignee-object-id $PRINCIPAL_ID \
+        --assignee-principal-type ServicePrincipal \
+        --scope ${azurerm_container_registry.main.id} || true
     EOT
   }
 
   depends_on = [
     azurerm_linux_function_app.main,
-    null_resource.storage_account
+    null_resource.storage_account,
+    azurerm_container_registry.main
   ]
 }
 

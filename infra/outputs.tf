@@ -41,17 +41,6 @@ output "acr_login_server" {
   value       = azurerm_container_registry.main.login_server
 }
 
-output "acr_username" {
-  description = "ACR admin username"
-  value       = azurerm_container_registry.main.admin_username
-}
-
-output "acr_password" {
-  description = "ACR admin password"
-  value       = azurerm_container_registry.main.admin_password
-  sensitive   = true
-}
-
 output "vnet_id" {
   description = "ID of the Virtual Network"
   value       = azurerm_virtual_network.main.id

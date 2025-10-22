@@ -98,8 +98,6 @@ jobs:
       function_app_name: ${{ steps.terraform-outputs.outputs.function_app_name }}
       resource_group_name: ${{ steps.terraform-outputs.outputs.resource_group_name }}
       acr_login_server: ${{ steps.terraform-outputs.outputs.acr_login_server }}
-      acr_username: ${{ steps.terraform-outputs.outputs.acr_username }}
-      acr_password: ${{ steps.terraform-outputs.outputs.acr_password }}
     
     steps:
     - name: Checkout code
@@ -130,10 +128,6 @@ jobs:
         echo "function_app_name=$(terraform output -raw function_app_name)" >> $GITHUB_OUTPUT
         echo "resource_group_name=$(terraform output -raw resource_group_name)" >> $GITHUB_OUTPUT
         echo "acr_login_server=$(terraform output -raw acr_login_server)" >> $GITHUB_OUTPUT
-        echo "acr_username=$(terraform output -raw acr_username)" >> $GITHUB_OUTPUT
-        ACR_PASSWORD=$(terraform output -raw acr_password)
-        echo "::add-mask::$ACR_PASSWORD"
-        echo "acr_password=$ACR_PASSWORD" >> $GITHUB_OUTPUT
       working-directory: ./infra
 
     - name: Output deployment info
@@ -153,15 +147,18 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    - name: Log in to Azure Container Registry (RBAC)
+      run: |
+        ACR_NAME=$(echo "${{ needs.deploy-infrastructure.outputs.acr_login_server }}" | cut -d'.' -f1)
+        az acr login --name $ACR_NAME
+
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
-
-    - name: Log in to Azure Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ${{ needs.deploy-infrastructure.outputs.acr_login_server }}
-        username: ${{ needs.deploy-infrastructure.outputs.acr_username }}
-        password: ${{ needs.deploy-infrastructure.outputs.acr_password }}
 
     - name: Extract metadata for Docker
       id: meta
