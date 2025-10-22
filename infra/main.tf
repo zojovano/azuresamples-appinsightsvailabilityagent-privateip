@@ -97,6 +97,49 @@ resource "null_resource" "storage_account" {
   depends_on = [azurerm_resource_group.main]
 }
 
+# Assign RBAC roles to Function App managed identity using Azure CLI
+# Cannot use Terraform role assignments due to SP lacking User Access Administrator role
+resource "null_resource" "function_storage_rbac" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      # Wait for Function App to be created and have managed identity
+      sleep 30
+      
+      # Get Function App principal ID
+      PRINCIPAL_ID=$(az functionapp identity show \
+        --name ${azurerm_linux_function_app.main.name} \
+        --resource-group ${azurerm_resource_group.main.name} \
+        --query principalId -o tsv)
+      
+      STORAGE_ID=$(az storage account show \
+        --name st${replace(local.resource_name, "-", "")} \
+        --resource-group ${azurerm_resource_group.main.name} \
+        --query id -o tsv)
+      
+      # Assign roles
+      az role assignment create \
+        --role "Storage Blob Data Owner" \
+        --assignee $PRINCIPAL_ID \
+        --scope $STORAGE_ID
+      
+      az role assignment create \
+        --role "Storage Queue Data Contributor" \
+        --assignee $PRINCIPAL_ID \
+        --scope $STORAGE_ID
+      
+      az role assignment create \
+        --role "Storage Table Data Contributor" \
+        --assignee $PRINCIPAL_ID \
+        --scope $STORAGE_ID
+    EOT
+  }
+
+  depends_on = [
+    azurerm_linux_function_app.main,
+    null_resource.storage_account
+  ]
+}
+
 # Data source to reference the CLI-created storage account
 data "azurerm_storage_account" "function" {
   name                = "st${replace(local.resource_name, "-", "")}"
@@ -174,35 +217,5 @@ resource "azurerm_linux_function_app" "main" {
   ]
 }
 
-# Role assignments for Function App managed identity to access Storage Account
-resource "azurerm_role_assignment" "function_storage_blob_data_owner" {
-  scope                = data.azurerm_storage_account.function.id
-  role_definition_name = "Storage Blob Data Owner"
-  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
-}
-
-resource "azurerm_role_assignment" "function_storage_queue_data_contributor" {
-  scope                = data.azurerm_storage_account.function.id
-  role_definition_name = "Storage Queue Data Contributor"
-  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
-}
-
-resource "azurerm_role_assignment" "function_storage_table_data_contributor" {
-  scope                = data.azurerm_storage_account.function.id
-  role_definition_name = "Storage Table Data Contributor"
-  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
-}
-
-# Role assignments for Service Principal (used by Terraform/GitHub Actions)
-# These allow the SP to manage storage account without using access keys
-resource "azurerm_role_assignment" "sp_storage_blob_data_owner" {
-  scope                = data.azurerm_storage_account.function.id
-  role_definition_name = "Storage Blob Data Owner"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
-
-resource "azurerm_role_assignment" "sp_storage_account_contributor" {
-  scope                = data.azurerm_storage_account.function.id
-  role_definition_name = "Storage Account Contributor"
-  principal_id         = data.azurerm_client_config.current.object_id
-}
+# Note: Role assignments for storage access are handled via Azure CLI
+# in null_resource.function_storage_rbac to work around RBAC permission limitations
