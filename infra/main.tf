@@ -82,7 +82,6 @@ resource "null_resource" "acr_rbac_sp" {
     command = <<-EOT
       az role assignment create \
         --role "AcrPush" \
-        --assignee ${data.azurerm_client_config.current.client_id} \
         --assignee-object-id ${data.azurerm_client_config.current.object_id} \
         --assignee-principal-type ServicePrincipal \
         --scope ${azurerm_container_registry.main.id} || true
@@ -207,32 +206,30 @@ resource "azurerm_linux_function_app" "main" {
     application_insights_connection_string = azurerm_application_insights.main.connection_string
     application_insights_key               = azurerm_application_insights.main.instrumentation_key
 
-    # Container configuration
+    # Container configuration with managed identity for ACR
     application_stack {
       docker {
-        registry_url      = "https://${azurerm_container_registry.main.login_server}"
-        image_name        = var.container_image != "" ? split("/", var.container_image)[1] : "availabilityagent"
-        image_tag         = var.container_image != "" ? split(":", var.container_image)[1] : "latest"
-        registry_username = azurerm_container_registry.main.admin_username
-        registry_password = azurerm_container_registry.main.admin_password
+        registry_url = "https://${azurerm_container_registry.main.login_server}"
+        image_name   = var.container_image != "" ? split("/", var.container_image)[1] : "availabilityagent"
+        image_tag    = var.container_image != "" ? split(":", var.container_image)[1] : "latest"
       }
     }
 
-    vnet_route_all_enabled = true
+    acr_use_managed_identity_credentials = true
+    vnet_route_all_enabled               = true
   }
 
   app_settings = {
-    "APPLICATIONINSIGHTS_CONNECTION_STRING" = azurerm_application_insights.main.connection_string
-    "PROBE_URLS"                            = var.probe_urls
-    "PROBE_FREQUENCY"                       = var.probe_frequency
-    "PROBE_TIMEOUT_SECONDS"                 = tostring(var.probe_timeout_seconds)
-    "TEST_NAME_PREFIX"                      = var.test_name_prefix
-    "TEST_LOCATION"                         = var.test_location
-    "DOCKER_REGISTRY_SERVER_URL"            = "https://${azurerm_container_registry.main.login_server}"
-    "DOCKER_REGISTRY_SERVER_USERNAME"       = azurerm_container_registry.main.admin_username
-    "DOCKER_REGISTRY_SERVER_PASSWORD"       = azurerm_container_registry.main.admin_password
-    "WEBSITES_ENABLE_APP_SERVICE_STORAGE"   = "false"
-    "AzureWebJobsStorage__accountName"      = data.azurerm_storage_account.function.name  # For managed identity
+    "APPLICATIONINSIGHTS_CONNECTION_STRING"        = azurerm_application_insights.main.connection_string
+    "PROBE_URLS"                                   = var.probe_urls
+    "PROBE_FREQUENCY"                              = var.probe_frequency
+    "PROBE_TIMEOUT_SECONDS"                        = tostring(var.probe_timeout_seconds)
+    "TEST_NAME_PREFIX"                             = var.test_name_prefix
+    "TEST_LOCATION"                                = var.test_location
+    "DOCKER_REGISTRY_SERVER_URL"                   = "https://${azurerm_container_registry.main.login_server}"
+    "DOCKER_ENABLE_CI"                             = "true"
+    "WEBSITES_ENABLE_APP_SERVICE_STORAGE"          = "false"
+    "AzureWebJobsStorage__accountName"             = data.azurerm_storage_account.function.name  # For managed identity
   }
 
   identity {
