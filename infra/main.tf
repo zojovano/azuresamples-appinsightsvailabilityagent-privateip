@@ -5,6 +5,9 @@ resource "random_string" "suffix" {
   upper   = false
 }
 
+# Get current client configuration (service principal)
+data "azurerm_client_config" "current" {}
+
 locals {
   resource_suffix = "${var.environment}-${random_string.suffix.result}"
   resource_name   = "${var.project_name}-${local.resource_suffix}"
@@ -74,19 +77,32 @@ resource "azurerm_container_registry" "main" {
 }
 
 # Storage Account for Function App
-resource "azurerm_storage_account" "function" {
-  name                            = "st${replace(local.resource_name, "-", "")}"
-  resource_group_name             = azurerm_resource_group.main.name
-  location                        = azurerm_resource_group.main.location
-  account_tier                    = "Standard"
-  account_replication_type        = "LRS"
+# Storage account created via Azure CLI to bypass policy restrictions on key-based auth
+# The subscription policy blocks Terraform's validation attempts using storage keys
+resource "null_resource" "storage_account" {
+  provisioner "local-exec" {
+    command = <<-EOT
+      az storage account create \
+        --name st${replace(local.resource_name, "-", "")} \
+        --resource-group ${azurerm_resource_group.main.name} \
+        --location ${azurerm_resource_group.main.location} \
+        --sku Standard_LRS \
+        --kind StorageV2 \
+        --allow-shared-key-access false \
+        --default-action Allow \
+        --tags Environment=dev ManagedBy=Terraform Project=AvailabilityAgent
+    EOT
+  }
+
+  depends_on = [azurerm_resource_group.main]
+}
+
+# Data source to reference the CLI-created storage account
+data "azurerm_storage_account" "function" {
+  name                = "st${replace(local.resource_name, "-", "")}"
+  resource_group_name = azurerm_resource_group.main.name
   
-  # Temporarily enable to allow Terraform provider validation during creation
-  # Azure Policy will enforce managed identity usage at runtime
-  shared_access_key_enabled       = true
-  default_to_oauth_authentication = true
-  
-  tags = var.tags
+  depends_on = [null_resource.storage_account]
 }
 
 # App Service Plan (Linux)
@@ -106,7 +122,7 @@ resource "azurerm_linux_function_app" "main" {
   resource_group_name = azurerm_resource_group.main.name
   service_plan_id     = azurerm_service_plan.main.id
 
-  storage_account_name              = azurerm_storage_account.function.name
+  storage_account_name              = data.azurerm_storage_account.function.name
   storage_uses_managed_identity     = true  # Use managed identity for storage access
 
   virtual_network_subnet_id = azurerm_subnet.function.id
@@ -142,7 +158,7 @@ resource "azurerm_linux_function_app" "main" {
     "DOCKER_REGISTRY_SERVER_USERNAME"       = azurerm_container_registry.main.admin_username
     "DOCKER_REGISTRY_SERVER_PASSWORD"       = azurerm_container_registry.main.admin_password
     "WEBSITES_ENABLE_APP_SERVICE_STORAGE"   = "false"
-    "AzureWebJobsStorage__accountName"      = azurerm_storage_account.function.name  # For managed identity
+    "AzureWebJobsStorage__accountName"      = data.azurerm_storage_account.function.name  # For managed identity
   }
 
   identity {
@@ -153,25 +169,40 @@ resource "azurerm_linux_function_app" "main" {
 
   depends_on = [
     azurerm_container_registry.main,
-    azurerm_subnet.function
+    azurerm_subnet.function,
+    null_resource.storage_account
   ]
 }
 
 # Role assignments for Function App managed identity to access Storage Account
 resource "azurerm_role_assignment" "function_storage_blob_data_owner" {
-  scope                = azurerm_storage_account.function.id
+  scope                = data.azurerm_storage_account.function.id
   role_definition_name = "Storage Blob Data Owner"
   principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
 }
 
 resource "azurerm_role_assignment" "function_storage_queue_data_contributor" {
-  scope                = azurerm_storage_account.function.id
+  scope                = data.azurerm_storage_account.function.id
   role_definition_name = "Storage Queue Data Contributor"
   principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
 }
 
 resource "azurerm_role_assignment" "function_storage_table_data_contributor" {
-  scope                = azurerm_storage_account.function.id
+  scope                = data.azurerm_storage_account.function.id
   role_definition_name = "Storage Table Data Contributor"
   principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
+}
+
+# Role assignments for Service Principal (used by Terraform/GitHub Actions)
+# These allow the SP to manage storage account without using access keys
+resource "azurerm_role_assignment" "sp_storage_blob_data_owner" {
+  scope                = data.azurerm_storage_account.function.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = data.azurerm_client_config.current.object_id
+}
+
+resource "azurerm_role_assignment" "sp_storage_account_contributor" {
+  scope                = data.azurerm_storage_account.function.id
+  role_definition_name = "Storage Account Contributor"
+  principal_id         = data.azurerm_client_config.current.object_id
 }
