@@ -80,6 +80,7 @@ resource "azurerm_storage_account" "function" {
   location                 = azurerm_resource_group.main.location
   account_tier             = "Standard"
   account_replication_type = "LRS"
+  shared_access_key_enabled = false  # Disable key-based auth, use managed identity instead
   tags                     = var.tags
 }
 
@@ -100,8 +101,8 @@ resource "azurerm_linux_function_app" "main" {
   resource_group_name = azurerm_resource_group.main.name
   service_plan_id     = azurerm_service_plan.main.id
 
-  storage_account_name       = azurerm_storage_account.function.name
-  storage_account_access_key = azurerm_storage_account.function.primary_access_key
+  storage_account_name              = azurerm_storage_account.function.name
+  storage_uses_managed_identity     = true  # Use managed identity for storage access
 
   virtual_network_subnet_id = azurerm_subnet.function.id
 
@@ -136,6 +137,7 @@ resource "azurerm_linux_function_app" "main" {
     "DOCKER_REGISTRY_SERVER_USERNAME"       = azurerm_container_registry.main.admin_username
     "DOCKER_REGISTRY_SERVER_PASSWORD"       = azurerm_container_registry.main.admin_password
     "WEBSITES_ENABLE_APP_SERVICE_STORAGE"   = "false"
+    "AzureWebJobsStorage__accountName"      = azurerm_storage_account.function.name  # For managed identity
   }
 
   identity {
@@ -148,4 +150,23 @@ resource "azurerm_linux_function_app" "main" {
     azurerm_container_registry.main,
     azurerm_subnet.function
   ]
+}
+
+# Role assignments for Function App managed identity to access Storage Account
+resource "azurerm_role_assignment" "function_storage_blob_data_owner" {
+  scope                = azurerm_storage_account.function.id
+  role_definition_name = "Storage Blob Data Owner"
+  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "function_storage_queue_data_contributor" {
+  scope                = azurerm_storage_account.function.id
+  role_definition_name = "Storage Queue Data Contributor"
+  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
+}
+
+resource "azurerm_role_assignment" "function_storage_table_data_contributor" {
+  scope                = azurerm_storage_account.function.id
+  role_definition_name = "Storage Table Data Contributor"
+  principal_id         = azurerm_linux_function_app.main.identity[0].principal_id
 }
