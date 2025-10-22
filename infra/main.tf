@@ -1,16 +1,8 @@
-# Generate random suffix for unique resource names
-resource "random_string" "suffix" {
-  length  = 6
-  special = false
-  upper   = false
-}
-
 # Get current client configuration (service principal)
 data "azurerm_client_config" "current" {}
 
 locals {
-  resource_suffix = "${var.environment}-${random_string.suffix.result}"
-  resource_name   = "${var.project_name}-${local.resource_suffix}"
+  resource_name = "${var.project_name}-${var.environment}"
 }
 
 # Resource Group
